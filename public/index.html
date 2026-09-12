@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content" />
+  <title>Emily AI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background: radial-gradient(circle at center, #2e112d 0%, #0d060f 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    .hud {
+      position: absolute;
+      top: 14px;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      z-index: 10;
+    }
+    .status-pill {
+      background: rgba(22, 12, 28, 0.85);
+      backdrop-filter: blur(12px);
+      padding: 6px 18px;
+      border-radius: 30px;
+      color: #ffd1dc;
+      font-size: 13px;
+      border: 1px solid rgba(255, 105, 180, 0.25);
+    }
+    .ui-wrapper {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+      padding: 12px 16px 20px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      z-index: 10;
+    }
+    .dialogue-card {
+      background: rgba(20, 10, 25, 0.88);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 105, 180, 0.3);
+      border-radius: 18px;
+      padding: 12px 18px;
+      color: #fff;
+      font-size: 14px;
+      line-height: 1.4;
+      max-width: 92%;
+      text-align: center;
+      min-height: 44px;
+    }
+    .input-row {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      max-width: 360px;
+    }
+    .text-input {
+      flex: 1;
+      padding: 12px 18px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 25px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+    .text-input::placeholder { color: #d1b3c4; }
+    .send-btn {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 25px;
+      background: linear-gradient(135deg, #ff4081, #c2185b);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .ptt-btn {
+      width: 100%;
+      max-width: 360px;
+      padding: 15px;
+      background: linear-gradient(135deg, #e91e63, #880e4f);
+      color: white;
+      border: none;
+      border-radius: 35px;
+      font-size: 15px;
+      font-weight: bold;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      box-shadow: 0 4px 18px rgba(233, 30, 99, 0.45);
+      cursor: pointer;
+    }
+    .ptt-btn.recording {
+      background: linear-gradient(135deg, #00e676, #00b0ff);
+      box-shadow: 0 0 22px #00e676;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div class="hud">
+    <div id="statusText" class="status-pill">Ready for you</div>
+  </div>
+
+  <div class="ui-wrapper">
+    <div id="dialogueText" class="dialogue-card">Say bonjour, mon chéri...</div>
+
+    <div class="input-row">
+      <input type="text" id="userInput" class="text-input" placeholder="Say something sweet..." />
+      <button id="sendBtn" class="send-btn">Send</button>
+    </div>
+
+    <button id="recordBtn" class="ptt-btn">🎙️ Hold to Speak with Emily</button>
+  </div>
+
+  <script>
+    let sweetVoice = null;
+    let mixer = null;
+    const clock = new THREE.Clock();
+
+    const recordBtn = document.getElementById('recordBtn');
+    const sendBtn = document.getElementById('sendBtn');
+    const userInput = document.getElementById('userInput');
+    const statusText = document.getElementById('statusText');
+    const dialogueText = document.getElementById('dialogueText');
+
+    function unlockAudio() {
+      if ('speechSynthesis' in window) window.speechSynthesis.resume();
+    }
+    window.addEventListener('touchstart', unlockAudio, { once: true });
+    window.addEventListener('click', unlockAudio, { once: true });
+
+    function loadVoice() {
+      const voices = window.speechSynthesis.getVoices();
+      sweetVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha')))
+        || voices.find(v => v.lang.startsWith('en'))
+        || voices[0];
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.onvoiceschanged = loadVoice;
+      loadVoice();
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.4, 2.8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 2.0));
+    const dirLight = new THREE.DirectionalLight(0xfff0f5, 1.8);
+    dirLight.position.set(3, 5, 4);
+    scene.add(dirLight);
+
+    new THREE.GLTFLoader().load('/models/emily.glb', (gltf) => {
+      const model = gltf.scene;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const scale = 2.0 / (Math.max(size.x, size.y, size.z) || 1);
+      model.scale.set(scale, scale, scale);
+      model.position.x = -center.x * scale;
+      model.position.y = (-center.y * scale) - 0.2;
+      model.position.z = -center.z * scale;
+      scene.add(model);
+
+      if (gltf.animations && gltf.animations.length) {
+        mixer = new THREE.AnimationMixer(model);
+        mixer.clipAction(gltf.animations[0]).play();
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (mixer) mixer.update(clock.getDelta());
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    function speak(text) {
+      if (!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+      loadVoice();
+
+      dialogueText.innerText = text;
+      statusText.innerText = "Emily is talking...";
+
+      const utt = new SpeechSynthesisUtterance(text);
+      if (sweetVoice) utt.voice = sweetVoice;
+      utt.pitch = 1.15;
+      utt.rate = 1.0;
+      utt.onend = () => { statusText.innerText = "Ready for you"; };
+      utt.onerror = () => { statusText.innerText = "Ready for you"; };
+
+      window.speechSynthesis.speak(utt);
+    }
+
+    async function sendMessage(text) {
+      if (!text || !text.trim()) return;
+      statusText.innerText = "Emily is thinking...";
+      dialogueText.innerText = `"${text}"`;
+      userInput.value = "";
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        const data = await res.json();
+        if (data.reply) {
+          speak(data.reply);
+        } else {
+          dialogueText.innerText = "Pardon, say that again?";
+          statusText.innerText = "Ready for you";
+        }
+      } catch (e) {
+        dialogueText.innerText = "Network error";
+        statusText.innerText = "Ready for you";
+      }
+    }
+
+    sendBtn.addEventListener('click', () => {
+      unlockAudio();
+      sendMessage(userInput.value);
+    });
+
+    userInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        unlockAudio();
+        sendMessage(userInput.value);
+      }
+    });
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let isListening = false;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (e) => {
+        const transcript = e.results[0][0].transcript;
+        if (transcript) sendMessage(transcript);
+      };
+      recognition.onerror = (e) => {
+        statusText.innerText = "Ready for you";
+        recordBtn.classList.remove('recording');
+        recordBtn.innerText = "🎙️ Hold to Speak with Emily";
+      };
+      recognition.onend = () => {
+        isListening = false;
+        recordBtn.classList.remove('recording');
+        recordBtn.innerText = "🎙️ Hold to Speak with Emily";
+      };
+    }
+
+    function startVoice(e) {
+      if (e) e.preventDefault();
+      unlockAudio();
+      if (!recognition) {
+        alert("Speech recognition not supported in this browser. Please use Chrome.");
+        return;
+      }
+      if (!isListening) {
+        try {
+          recognition.start();
+          isListening = true;
+          recordBtn.classList.add('recording');
+          recordBtn.innerText = "Listening... release to send";
+          statusText.innerText = "Listening...";
+        } catch (err) {}
+      }
+    }
+
+    function stopVoice(e) {
+      if (e) e.preventDefault();
+      if (recognition && isListening) {
+        recognition.stop();
+        isListening = false;
+        recordBtn.classList.remove('recording');
+        recordBtn.innerText = "🎙️ Hold to Speak with Emily";
+      }
+    }
+
+    recordBtn.addEventListener('touchstart', startVoice, { passive: false });
+    recordBtn.addEventListener('touchend', stopVoice, { passive: false });
+    recordBtn.addEventListener('mousedown', startVoice);
+    recordBtn.addEventListener('mouseup', stopVoice);
+  </script>
+</body>
+</html>
