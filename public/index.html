@@ -121,7 +121,7 @@
   </div>
 
   <div class="ui-wrapper">
-    <div id="dialogueText" class="dialogue-card">Say bonjour, mon chéri...</div>
+    <div id="dialogueText" class="dialogue-card">Bonjour mon chéri... say something to me!</div>
 
     <div class="input-row">
       <input type="text" id="userInput" class="text-input" placeholder="Say something sweet..." />
@@ -132,6 +132,10 @@
   </div>
 
   <script>
+    const GEMINI_KEY = "AQ.Ab8RN6KZ3Q9dPc8dn0TopAx8hWKbz8U_gG6w1y0oVIJ-zZpNhA";
+    const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_KEY}`;
+    const EMILY_SYSTEM = "You are Emily, a chic, charming American girl living in Paris. Tone: sweet, playful, slightly teasing, and flirty. Keep replies short (1-2 sentences), conversational, and sprinkle in light French phrases. Never output reasoning tags, thoughts, asterisks, or bullet points.";
+
     let sweetVoice = null;
     let mixer = null;
     const clock = new THREE.Clock();
@@ -149,6 +153,7 @@
     window.addEventListener('click', unlockAudio, { once: true });
 
     function loadVoice() {
+      if (!('speechSynthesis' in window)) return;
       const voices = window.speechSynthesis.getVoices();
       sweetVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha')))
         || voices.find(v => v.lang.startsWith('en'))
@@ -173,7 +178,7 @@
     dirLight.position.set(3, 5, 4);
     scene.add(dirLight);
 
-    new THREE.GLTFLoader().load('/models/emily.glb', (gltf) => {
+    new THREE.GLTFLoader().load('models/emily.glb', (gltf) => {
       const model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
@@ -193,7 +198,7 @@
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
+      camera.updateProjectionMatrix;
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
@@ -223,40 +228,57 @@
       window.speechSynthesis.speak(utt);
     }
 
-    async function sendMessage(text) {
-      if (!text || !text.trim()) return;
+    async function sendToGemini(userText) {
+      if (!userText || !userText.trim()) return;
       statusText.innerText = "Emily is thinking...";
-      dialogueText.innerText = `"${text}"`;
+      dialogueText.innerText = `"${userText}"`;
       userInput.value = "";
 
+      const payload = {
+        systemInstruction: {
+          parts: [{ text: EMILY_SYSTEM }]
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: userText }]
+          }
+        ]
+      };
+
       try {
-        const res = await fetch('http://127.0.0.1:3000/api/chat', {
+        const res = await fetch(GEMINI_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
+          body: JSON.stringify(payload)
         });
+
         const data = await res.json();
-        if (data.reply) {
-          speak(data.reply);
-        } else {
-          dialogueText.innerText = "Pardon, say that again?";
+        if (data.error) {
+          dialogueText.innerText = "Error: " + data.error.message;
           statusText.innerText = "Ready for you";
+          return;
         }
-      } catch (e) {
-        dialogueText.innerText = "Network error";
+
+        const reply = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text?.trim()
+          || "Bonjour handsome! What are you thinking about?";
+
+        speak(reply);
+      } catch (err) {
+        dialogueText.innerText = "Network error: check internet connection";
         statusText.innerText = "Ready for you";
       }
     }
 
     sendBtn.addEventListener('click', () => {
       unlockAudio();
-      sendMessage(userInput.value);
+      sendToGemini(userInput.value);
     });
 
     userInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         unlockAudio();
-        sendMessage(userInput.value);
+        sendToGemini(userInput.value);
       }
     });
 
@@ -272,9 +294,9 @@
 
       recognition.onresult = (e) => {
         const transcript = e.results[0][0].transcript;
-        if (transcript) sendMessage(transcript);
+        if (transcript) sendToGemini(transcript);
       };
-      recognition.onerror = (e) => {
+      recognition.onerror = () => {
         statusText.innerText = "Ready for you";
         recordBtn.classList.remove('recording');
         recordBtn.innerText = "🎙️ Hold to Speak with Emily";
@@ -290,7 +312,7 @@
       if (e) e.preventDefault();
       unlockAudio();
       if (!recognition) {
-        alert("Speech recognition not supported in this browser. Please use Chrome.");
+        alert("Microphone speech recognition not available.");
         return;
       }
       if (!isListening) {
